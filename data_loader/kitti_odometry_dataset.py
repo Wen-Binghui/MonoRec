@@ -112,8 +112,9 @@ class KittiOdometryDataset(Dataset):
     def get_dataset_index(self, index: int):
         for dataset_index, dataset_size in enumerate(self._dataset_sizes):
             if index >= dataset_size:
-                index = index - dataset_size
+                index = index - dataset_size #* if the index exceeds the first dataset, subs the index and use following dataset
             else:
+                # print(dataset_index, index)
                 return dataset_index, index
         return None, None
 
@@ -153,8 +154,8 @@ class KittiOdometryDataset(Dataset):
 
     def preprocess_depth_dso(self, depth: Image.Image, dso_depth_parameters, crop_box=None):
         h, w, f_x = dso_depth_parameters
-        depth = np.array(depth, dtype=np.float)
-        indices = np.array(np.nonzero(depth), dtype=np.float)
+        depth = np.array(depth, dtype=float)
+        indices = np.array(np.nonzero(depth), dtype=float)
         indices[0] = np.clip(indices[0] / depth.shape[0] * h, 0, h-1)
         indices[1] = np.clip(indices[1] / depth.shape[1] * w, 0, w-1)
 
@@ -177,17 +178,17 @@ class KittiOdometryDataset(Dataset):
         data[1] = np.clip(data[1] / crop_width * self.target_image_size[1], 0, self.target_image_size[1]-1)
 
         depth = np.zeros(self.target_image_size)
-        depth[np.around(data[0]).astype(np.int), np.around(data[1]).astype(np.int)] = data[2]
+        depth[np.around(data[0]).astype(int), np.around(data[1]).astype(int)] = data[2]
 
         return torch.tensor(depth, dtype=torch.float32)
 
     def preprocess_depth_annotated_lidar(self, depth: Image.Image, crop_box=None):
-        depth = np.array(depth, dtype=np.float)
+        depth = np.array(depth, dtype=float)
         h, w = depth.shape
-        indices = np.array(np.nonzero(depth), dtype=np.float)
+        indices = np.array(np.nonzero(depth), dtype=float)#* positions of nonzero-elements
 
         depth = depth[depth > 0]
-        depth = 256.0 / depth
+        depth = 256.0 / depth  
 
         data = np.concatenate([indices, np.expand_dims(depth, axis=0)], axis=0)
 
@@ -206,7 +207,7 @@ class KittiOdometryDataset(Dataset):
         data[1] = np.clip(data[1] / crop_width * self.target_image_size[1], 0, self.target_image_size[1] - 1)
 
         depth = np.zeros(self.target_image_size)
-        depth[np.around(data[0]).astype(np.int), np.around(data[1]).astype(np.int)] = data[2]
+        depth[np.around(data[0]).astype(int), np.around(data[1]).astype(int)] = data[2]
 
         return torch.tensor(depth, dtype=torch.float32)
 
@@ -226,7 +227,9 @@ class KittiOdometryDataset(Dataset):
 
         dataset = self._datasets[dataset_index]
         keyframe_intrinsics = self._intrinsics[dataset_index]
-        if not (self.lidar_depth or self.dso_depth):
+        print(f"self._offset={self._offset:d}\n")
+
+        if not (self.lidar_depth or self.dso_depth):# don't have lidar_depth and dso_depth
             keyframe_depth = self.preprocess_depth(np.load(depth_folder / f"{(index + self._offset):06d}.npy"), self._depth_crop_boxes[dataset_index]).type(torch.float32).unsqueeze(0)
         else:
             if self.lidar_depth:
@@ -253,6 +256,8 @@ class KittiOdometryDataset(Dataset):
         frames = [self.preprocess_image((dataset.get_cam0 if not self.use_color else dataset.get_cam2)(index + self._offset + i + self.offset_d),
                                         self._crop_boxes[dataset_index]) for i in
                   range(-(self.frame_count // 2) * self.dilation, ((self.frame_count + 1) // 2) * self.dilation + 1, self.dilation) if i != 0]
+
+                  
         intrinsics = [self._intrinsics[dataset_index] for _ in range(self.frame_count)]
         poses = [torch.tensor(dataset.poses[index + self._offset + i + self.offset_d], dtype=torch.float32) for i in
                  range(-(self.frame_count // 2) * self.dilation, ((self.frame_count + 1) // 2) * self.dilation + 1, self.dilation) if i != 0]

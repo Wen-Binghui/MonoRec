@@ -109,3 +109,7 @@ datasets/
 .vscode/
 .idea/
 __MACOSX/
+
+
+*.zip
+*.pth

@@ -126,20 +126,20 @@ class ResnetEncoder(nn.Module):
         self.features.append(self.encoder.layer3(self.features[-1]))
         self.features.append(self.encoder.layer4(self.features[-1]))
 
-        return self.features
+        return self.features #! List of length 5 (output of each layer)
 
 
 class CostVolumeModule(nn.Module):
     def __init__(self, use_mono=True, use_stereo=False, use_ssim=True, patch_size=3, channel_weights=(5 / 32, 16 / 32, 11 / 32), alpha=10, not_center_cv=False, sfcv_mult_mask=True):
         super().__init__()
         self.use_mono = use_mono
-        self.use_stereo = use_stereo
+        self.use_stereo = use_stereo # default False
         self.use_ssim = use_ssim
         self.patch_size = patch_size
         self.border_radius = patch_size // 2 + 1
         if not (channel_weights is None):
             self.sad_kernel = (torch.tensor(channel_weights) / (patch_size ** 2)) \
-                .view(1, len(channel_weights), 1, 1, 1).repeat(1, 1, 1, patch_size, patch_size)
+                .view(1, len(channel_weights), 1, 1, 1).repeat(1, 1, 1, patch_size, patch_size) # 1 * 3 * 1 * patch_size * patch_size
         else:
             self.sad_kernel = None
         self.alpha = alpha
@@ -157,7 +157,7 @@ class CostVolumeModule(nn.Module):
         intrinsics = []
         poses = []
 
-        if self.use_mono:
+        if self.use_mono: # two mode, different frames
             frames += data_dict["frames"]
             intrinsics += data_dict["intrinsics"]
             poses += data_dict["poses"]
@@ -171,14 +171,15 @@ class CostVolumeModule(nn.Module):
         extrinsics = [torch.inverse(pose) for pose in poses]
 
         # If the convolution kernel for the SAD tensor has not been defined in init, do it now.
-        if self.sad_kernel is None:
+        if self.sad_kernel is None: #* (no priority)
             self.sad_kernel = self.sad_kernel = (
                     torch.tensor(channels * [1 / channels], device=keyframe.device) / (self.patch_size ** 2)) \
-                .view(1, channels, 1, 1, 1).repeat(1, 1, 1, self.patch_size, self.patch_size)
-        elif self.sad_kernel.device != keyframe.device:
+                .view(1, channels, 1, 1, 1).repeat(1, 1, 1, self.patch_size, self.patch_size) # summation is fixed
+
+        elif self.sad_kernel.device != keyframe.device: #* to device
             self.sad_kernel = self.sad_kernel.cuda(keyframe.get_device()) if keyframe.is_cuda else self.sad_kernel
 
-        if "cv_depths" in data_dict:
+        if "cv_depths" in data_dict: #? what is cv_depths?
             depths = data_dict["cv_depths"]
         else:
             depths = (1 / torch.linspace(data_dict["inv_depth_max"][0].item(), data_dict["inv_depth_min"][0].item(), data_dict["cv_depth_steps"][0].item(),
@@ -611,7 +612,7 @@ class MonoRecModel(nn.Module):
         self.mask_cp_loc = mask_cp_loc
         self.depth_cp_loc = depth_cp_loc
         self.freeze_module = freeze_module
-        self.freeze_resnet = freeze_resnet
+        self.freeze_resnet = freeze_resnet # default True
 
         self._feature_extractor = ResnetEncoder(num_layers=18, pretrained=True)
         if self.freeze_resnet:

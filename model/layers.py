@@ -40,18 +40,18 @@ class Conv3x3(nn.Module):
         out = self.conv(out)
         return out
 
-class Backprojection(nn.Module):
+class Backprojection(nn.Module): #! No grad needed in this Module
     def __init__(self, batch_size, height, width):
         super(Backprojection, self).__init__()
 
         self.N, self.H, self.W = batch_size, height, width
 
         yy, xx = torch.meshgrid([torch.arange(0., float(self.H)), torch.arange(0., float(self.W))])
-        yy = yy.contiguous().view(-1) #* vector of y coordinates
+        yy = yy.contiguous().view(-1) #* vector of y coordinates (self.H * self.W)
         xx = xx.contiguous().view(-1)
-        self.ones = nn.Parameter(torch.ones(self.N, 1, self.H * self.W), requires_grad=False)
-        self.coord = torch.unsqueeze(torch.stack([xx, yy], 0), 0).repeat(self.N, 1, 1)
-        self.coord = nn.Parameter(torch.cat([self.coord, self.ones], 1), requires_grad=False)
+        self.ones = nn.Parameter(torch.ones(self.N, 1, self.H * self.W), requires_grad=False) #* (self.N, 1, self.H * self.W)
+        self.coord = torch.unsqueeze(torch.stack([xx, yy], 0), 0).repeat(self.N, 1, 1)#* (1, 2, self.H * self.W) -> (self.N, 2, self.H * self.W)
+        self.coord = nn.Parameter(torch.cat([self.coord, self.ones], 1), requires_grad=False)#* (self.N, 3, self.H * self.W) [xx, yy, ones]
 
     def forward(self, depth, inv_K) :
         cam_p_norm = torch.matmul(inv_K[:, :3, :3], self.coord[:depth.shape[0], :, :])
@@ -60,15 +60,16 @@ class Backprojection(nn.Module):
 
         return cam_p_h
 
-def point_projection(points3D, batch_size, height, width, K, T):
+def point_projection(points3D, batch_size, height, width, K, T): # K-intrinsics T-extrinsics
     N, H, W = batch_size, height, width
-    cam_coord = torch.matmul(torch.matmul(K, T)[:, :3, :], points3D)
-    img_coord = cam_coord[:, :2, :] / (cam_coord[:, 2:3, :] + 1e-7)
-    img_coord[:, 0, :] /= W - 1
+    cam_coord = torch.matmul(torch.matmul(K, T)[:, :3, :], points3D)  #* (1,3.4) @ (cv_depth_steps, 4, H*W) -> (cv_depth_steps, 3, H*W)
+    #* points3D: Keyframe_cam_system -T(1)-> WORLD_system -T(0)-> frame_cam_system -K-> img_coord
+    img_coord = cam_coord[:, :2, :] / (cam_coord[:, 2:3, :] + 1e-7) #* XY / Z -> (cv_depth_steps, 2, H*W)
+    img_coord[:, 0, :] /= W - 1 # normalize 
     img_coord[:, 1, :] /= H - 1
-    img_coord = (img_coord - 0.5) * 2
+    img_coord = (img_coord - 0.5) * 2 # -1 ~ 1
     img_coord = img_coord.view(N, 2, H, W).permute(0, 2, 3, 1)
-    return img_coord
+    return img_coord #* (N, H, W, 2)
 
 def upsample(x):
     """Upsample input tensor by a factor of 2

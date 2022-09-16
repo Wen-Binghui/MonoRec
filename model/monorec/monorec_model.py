@@ -168,7 +168,7 @@ class CostVolumeModule(nn.Module):
 
         batch_size, channels, height, width = keyframe.shape
 
-        extrinsics = [torch.inverse(pose) for pose in poses]
+        extrinsics = [torch.inverse(pose) for pose in poses] #! inverse!!!!!
 
         # If the convolution kernel for the SAD tensor has not been defined in init, do it now.
         if self.sad_kernel is None: #* (no priority)
@@ -184,6 +184,7 @@ class CostVolumeModule(nn.Module):
         else:
             depths = (1 / torch.linspace(data_dict["inv_depth_max"][0].item(), data_dict["inv_depth_min"][0].item(), data_dict["cv_depth_steps"][0].item(),
                                     device=keyframe.device)).view(1, -1, 1, 1).expand(batch_size, -1, height, width)
+            #* (batch_size, cv_depth_steps, height, width)
 
         backproject_depth = Backprojection(1, height, width)
         backproject_depth.to(keyframe.device)
@@ -192,31 +193,35 @@ class CostVolumeModule(nn.Module):
         single_frame_cvs = [[] for i in range(len(frames))]
 
         for batch_nr in range(batch_size):
-            batch_depths = depths[batch_nr, :, :, :]
+            batch_depths = depths[batch_nr, :, :, :] #* (1, cv_depth_steps, height, width); same index in dim1 => same value 
 
-            depth_value_count = batch_depths.shape[0]
-
+            depth_value_count = batch_depths.shape[0] #* = cv_depth_steps
             inv_k = torch.inverse(keyframe_intrinsics[batch_nr]).unsqueeze(0)
-            cam_points = (inv_k[:, :3, :3] @ backproject_depth.coord)
-            cam_points = batch_depths.view(depth_value_count, 1, -1) * cam_points
-            cam_points = torch.cat([cam_points, backproject_depth.ones.expand(depth_value_count, -1, -1)], 1)
+            cam_points = (inv_k[:, :3, :3] @ backproject_depth.coord) #* Rotation (1,3,3) @ (1,3,H*W) -> (1,3,H*W) :Coordinate in KEY-frame-cam-system [X/Z, Y/Z, 1]
+            cam_points = batch_depths.view(depth_value_count, 1, -1) * cam_points #* (cv_depth_steps, 1, H*W) * (1,3,H*W) -> (cv_depth_steps, 3, H*W) :Depth*Coordinate
+            cam_points = torch.cat([cam_points, backproject_depth.ones.expand(depth_value_count, -1, -1)], 1) 
+            #* [(cv_depth_steps, 3, H*W), (cv_depth_steps, 1, H*W)] -> (cv_depth_steps, 4, H*W) :[Depth*Coordinate, 1]
 
             warped_images = []
             warped_masks = []
 
             for i, image in enumerate(frames):
-                t = extrinsics[i][batch_nr] @ keyframe_pose[batch_nr]
-                pix_coords = point_projection(cam_points, depth_value_count, height, width, intrinsics[i][batch_nr].unsqueeze(0), t.unsqueeze(0)).clamp(-2, 2)
-
+                t = extrinsics[i][batch_nr] @ keyframe_pose[batch_nr] # 4,4 @ 4,4
+                #* (D, H, W, 2)
+                pix_coords = point_projection(cam_points, depth_value_count, height, width, intrinsics[i][batch_nr].unsqueeze(0), t.unsqueeze(0)).clamp(-2, 2) # about [-1,1]
+                
                 # (D, C, H, W)
-                image_to_warp = image[batch_nr, :, :, :].unsqueeze(0).expand(depth_value_count, -1, -1, -1)
+                image_to_warp = image[batch_nr, :, :, :].unsqueeze(0).expand(depth_value_count, -1, -1, -1) #* (cv_depth_steps, 3, H, W)
+                
+                #* (D, 1, H, W) basic 1; pad 0;
                 mask_to_warp = self.create_mask(1, height, width, self.border_radius, keyframe.device).expand(
                     depth_value_count, -1, -1, -1)
 
-                warped_image = F.grid_sample(image_to_warp, pix_coords)
+                # print(pix_coords[0,:,:,0]) 
+                warped_image = F.grid_sample(image_to_warp, pix_coords, align_corners=True)
                 warped_images.append(warped_image)
 
-                warped_mask = F.grid_sample(mask_to_warp, pix_coords)
+                warped_mask = F.grid_sample(mask_to_warp, pix_coords, align_corners=True)
                 warped_mask = mask_to_warp[0] * torch.min(warped_mask != 0, dim=0)[0]
                 warped_masks.append(warped_mask)
 
@@ -554,7 +559,7 @@ class DepthModule(nn.Module):
 
     def predict_depth(self, x, scale):
         x = self.predictors[scale](x)
-        x = torch.abs(F.tanh(x))
+        x = torch.abs(torch.tanh(x))
         return x
 
 
